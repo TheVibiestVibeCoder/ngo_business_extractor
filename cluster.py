@@ -219,7 +219,12 @@ def name_clusters(
             f"Anfragen aus diesem Cluster:\n{bullet_list}\n\n"
             "Gib diesem Cluster einen prägnanten deutschen Namen (max. 5 Wörter), "
             "der das gemeinsame Thema beschreibt. "
-            "Antworte NUR mit dem Namen, ohne Erklärung oder Anführungszeichen."
+            "Extrahiere außerdem alle konkreten Akteure, Vereine, Organisationen oder "
+            "Institutionen, die in den Anfragentiteln namentlich genannt werden, "
+            "und hänge sie in Klammern an den Namen an.\n\n"
+            "Format: Clustername (Akteur 1, Akteur 2, ...)\n"
+            "Falls keine konkreten Akteure genannt sind, lass die Klammern weg.\n"
+            "Antworte NUR mit dem Ergebnis, ohne Erklärung oder Anführungszeichen."
         )
 
         resp = requests.post(
@@ -238,6 +243,21 @@ def name_clusters(
 
 
 # ── Plotly interactive figure ─────────────────────────────────────────────────
+
+def _wrap_label(text: str, max_chars: int = 20) -> str:
+    """Insert <br> tags so no line exceeds max_chars, breaking on spaces."""
+    words = text.split(" ")
+    lines, current = [], ""
+    for word in words:
+        if current and len(current) + 1 + len(word) > max_chars:
+            lines.append(current)
+            current = word
+        else:
+            current = (current + " " + word).lstrip()
+    if current:
+        lines.append(current)
+    return "<br>".join(lines)
+
 
 def build_figure(
     docs: list[dict],
@@ -289,78 +309,217 @@ def build_figure(
         cx, cy = float(ccoords[:, 0].mean()), float(ccoords[:, 1].mean())
         fig.add_annotation(
             x=cx, y=cy,
-            text=f"<b>{cluster_label}</b>",
+            text=f"<b>{_wrap_label(cluster_label)}</b>",
             showarrow=False,
-            font=dict(size=11, color=color, family="Arial"),
-            bgcolor="rgba(20,20,30,0.75)",
-            borderpad=4,
+            font=dict(size=11, color="#ffffff", family="Inter, system-ui, sans-serif"),
+            bgcolor="rgba(10,10,18,0.78)",
+            borderpad=6,
             bordercolor=color,
             borderwidth=1,
+            align="center",
         )
 
     fig.update_layout(
         title=dict(
             text="NGO-Business Anfragen — Themencluster",
-            font=dict(size=20, color="#f0f0f0", family="Arial"),
+            font=dict(size=22, color="#f5f5f7", family="Inter, system-ui, sans-serif"),
             x=0.5,
+            pad=dict(t=8),
         ),
         showlegend=True,
         legend=dict(
-            title=dict(text="Cluster", font=dict(color="#ccc")),
-            bgcolor="rgba(30,30,45,0.85)",
-            bordercolor="#444",
+            title=dict(text="Cluster", font=dict(color="#888", size=11,
+                                                  family="Inter, system-ui, sans-serif")),
+            bgcolor="rgba(12,12,20,0.82)",
+            bordercolor="rgba(255,255,255,0.08)",
             borderwidth=1,
-            font=dict(color="#ddd"),
+            font=dict(color="#c8c8d0", size=11, family="Inter, system-ui, sans-serif"),
             itemsizing="constant",
+            itemclick="toggleothers",
+            itemdoubleclick="toggle",
         ),
-        plot_bgcolor="#0d0d1a",
-        paper_bgcolor="#0d0d1a",
-        font=dict(color="#e0e0e0"),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, showline=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, showline=False),
+        plot_bgcolor="#08080f",
+        paper_bgcolor="#08080f",
+        font=dict(color="#e0e0e8", family="Inter, system-ui, sans-serif"),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                   showline=False, fixedrange=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                   showline=False, fixedrange=False),
         hovermode="closest",
-        hoverlabel=dict(bgcolor="#1e1e2e", bordercolor="#555", font=dict(color="#fff")),
-        margin=dict(l=20, r=20, t=70, b=20),
-        height=800,
+        hoverlabel=dict(
+            bgcolor="#13131f",
+            bordercolor="rgba(255,255,255,0.12)",
+            font=dict(color="#f0f0f8", size=12, family="Inter, system-ui, sans-serif"),
+            namelength=0,
+        ),
+        margin=dict(l=0, r=0, t=54, b=0),
+        height=None,
+        autosize=True,
     )
 
     return fig
 
 
 def save_html(fig: go.Figure, path: Path) -> None:
-    """Write self-contained HTML with click-to-open-URL support."""
+    """Write self-contained HTML with full-viewport layout and UI controls."""
     html = pio.to_html(
         fig,
         full_html=True,
         include_plotlyjs="cdn",
         div_id="anfragen_cluster_map",
-        config={"scrollZoom": True, "displayModeBar": True},
+        config={"scrollZoom": True, "displayModeBar": True, "displaylogo": False,
+                "modeBarButtonsToRemove": ["select2d", "lasso2d"]},
     )
 
-    # Inject JavaScript: clicking a point opens its parliament URL in a new tab
-    click_js = """
+    head_inject = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: #08080f;
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #e0e0e8;
+    overflow: hidden;
+  }
+
+  /* Plotly's outer wrapper — make it fill the viewport */
+  body > div:first-child {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .plotly-graph-div {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+  }
+
+  /* ── Control bar ────────────────────────────────────── */
+  #map-controls {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #map-controls button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,0.04);
+    color: #b0b0c0;
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  #map-controls button::before {
+    content: '●';
+    font-size: 8px;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+
+  #map-controls button:hover {
+    background: rgba(255,255,255,0.09);
+    border-color: rgba(255,255,255,0.22);
+    color: #e8e8f4;
+  }
+
+  #map-controls button.off {
+    color: #404050;
+    border-color: rgba(255,255,255,0.05);
+    background: transparent;
+  }
+
+  #map-controls button.off::before {
+    opacity: 0.2;
+  }
+</style>
+"""
+
+    extra_js = """
 <script>
 (function() {
-  function attachClickHandler() {
-    var el = document.getElementById('anfragen_cluster_map');
-    if (!el || !el.on) {
-      setTimeout(attachClickHandler, 200);
-      return;
+  var _annotations = null;
+  var labelsVisible = true;
+  var legendVisible = true;
+
+  function getPlot() { return document.getElementById('anfragen_cluster_map'); }
+
+  window.toggleLabels = function() {
+    var el = getPlot();
+    if (!el) return;
+    if (_annotations === null) {
+      _annotations = (el.layout.annotations || []).map(function(a) {
+        return Object.assign({}, a);
+      });
     }
+    labelsVisible = !labelsVisible;
+    Plotly.relayout(el, { annotations: labelsVisible ? _annotations : [] });
+    var btn = document.getElementById('btn-labels');
+    btn.textContent = labelsVisible ? 'Labels ausblenden' : 'Labels einblenden';
+    btn.classList.toggle('off', !labelsVisible);
+  };
+
+  window.toggleLegend = function() {
+    var el = getPlot();
+    if (!el) return;
+    legendVisible = !legendVisible;
+    Plotly.relayout(el, { showlegend: legendVisible });
+    var btn = document.getElementById('btn-legend');
+    btn.textContent = legendVisible ? 'Legende ausblenden' : 'Legende einblenden';
+    btn.classList.toggle('off', !legendVisible);
+  };
+
+  function attachClickHandler() {
+    var el = getPlot();
+    if (!el || !el.on) { setTimeout(attachClickHandler, 200); return; }
     el.on('plotly_click', function(data) {
       if (data.points && data.points.length > 0) {
         var url = data.points[0].customdata;
-        if (url && url.startsWith('http')) {
-          window.open(url, '_blank');
-        }
+        if (url && url.startsWith('http')) window.open(url, '_blank');
       }
     });
   }
-  document.addEventListener('DOMContentLoaded', attachClickHandler);
+
+  /* Resize plot to fill available height whenever window resizes */
+  function resizePlot() {
+    var el = getPlot();
+    if (el) Plotly.relayout(el, { autosize: true });
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    attachClickHandler();
+    window.addEventListener('resize', resizePlot);
+  });
 })();
 </script>
+
+<div id="map-controls">
+  <button id="btn-labels" onclick="toggleLabels()">Labels ausblenden</button>
+  <button id="btn-legend" onclick="toggleLegend()">Legende ausblenden</button>
+</div>
 """
-    html = html.replace("</body>", click_js + "\n</body>")
+
+    html = html.replace("</head>", head_inject + "\n</head>")
+    html = html.replace("</body>", extra_js + "\n</body>")
     path.write_text(html, encoding="utf-8")
 
 
