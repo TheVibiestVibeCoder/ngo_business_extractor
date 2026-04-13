@@ -405,6 +405,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Min documents per HDBSCAN cluster (default: 3)")
     p.add_argument("--no-pdf-text",      action="store_true",
                    help="Skip PDF text extraction and use titles+topics only")
+    p.add_argument("--clean",            action="store_true",
+                   help="Delete the output CSV file and exit (safe to open in VS Code after)")
     return p
 
 
@@ -417,6 +419,15 @@ def main() -> None:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
     args = build_parser().parse_args()
+
+    if args.clean:
+        csv_path = Path(args.output_dir) / f"{args.output_name}.csv"
+        if csv_path.exists():
+            csv_path.unlink()
+            _p(f"  Deleted {csv_path}")
+        else:
+            _p(f"  Nothing to delete ({csv_path} not found)")
+        sys.exit(0)
 
     api_key = os.getenv("MISTRAL_API_KEY", "")
     if not api_key or api_key == "your_key_here":
