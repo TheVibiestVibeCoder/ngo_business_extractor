@@ -16,11 +16,10 @@ python -m pip install requests beautifulsoup4 lxml
 
 ### 2. Cluster dependencies (Mistral API required)
 
-Due to a Windows MAX_PATH limitation with the Mistral SDK, packages for `cluster.py` must be installed into a dedicated venv at a short path:
+`cluster.py` calls the Mistral API directly over HTTP — no Mistral SDK needed. Install the remaining packages into your regular environment (or any venv you like):
 
 ```bash
-python -m venv C:\ngo_venv
-C:\ngo_venv\Scripts\pip install mistralai pdfplumber umap-learn scikit-learn plotly python-dotenv numpy pandas
+pip install pdfplumber umap-learn scikit-learn plotly python-dotenv numpy pandas
 ```
 
 ### 3. Mistral API key
@@ -41,8 +40,7 @@ Get a key at [console.mistral.ai](https://console.mistral.ai) → Workspace → 
 python scraper.py --range 12months
 
 # Step 2 — cluster and visualise
-C:\ngo_venv\Scripts\activate
-python cluster.py --no-pdf-text
+python cluster.py
 
 # Open the result in your browser
 start output\clusters.html
@@ -58,9 +56,10 @@ Fetches NGO-related Anfragen from the Austrian Parliament API, downloads the ori
 
 1. **Fetches** all Anfragen (type `J`) from the Parliament API across relevant legislative periods
 2. **Filters** rows by NGO keywords (`ngo`, `ngo-business`, `non-governmental`, …)
-3. **Scrapes** each detail page to find the "Anfrage (gescanntes Original)" PDF link — 3 fallback strategies
-4. **Downloads** PDFs and reports `OK` / `SKIP` / `FAILED` per inquiry
-5. **Exports** to `output/anfragen_<range>_<timestamp>.csv` and/or `.json`
+3. **Deduplicates** by inquiry number — same inquiry appearing across multiple legislative periods is kept only once
+4. **Scrapes** each detail page to find the "Anfrage (gescanntes Original)" PDF link — 3 fallback strategies
+5. **Downloads** PDFs and reports `OK` / `SKIP` / `FAILED` per inquiry — skips files already on disk by default
+6. **Exports** to `output/anfragen_<range>_<timestamp>.csv` and/or `.json`
 
 ---
 
@@ -170,7 +169,8 @@ python scraper.py --range 3months --fields number,date,title,party --no-pdf
 |---|---|---|
 | `--no-pdf` | | Skip PDF download — metadata only |
 | `--pdf-dir DIR` | `--pdf-dir my_pdfs/` | Custom PDF directory (default: `<output-dir>/pdfs/`) |
-| `--skip-existing` | | Skip download if the PDF already exists on disk |
+| `--skip-existing` | **(default)** | Skip download if the PDF already exists on disk |
+| `--no-skip-existing` | | Re-download PDFs even if they already exist on disk |
 | `--delay SECONDS` | `--delay 1.0` | Pause between PDF requests (default: `0.5`) |
 | `--retry-failed CSV` | `--retry-failed output/anfragen_….csv` | Re-attempt only `FAILED` rows; updates the CSV in-place |
 | `--clean-pdfs` | | Delete all PDFs and exit. Combined with `--range`/`--last`: cleans then scrapes. |
@@ -178,7 +178,11 @@ python scraper.py --range 3months --fields number,date,title,party --no-pdf
 | `--delete-pdf NUMBER` | `--delete-pdf 5771/J` | Delete the PDF for a specific inquiry number and exit |
 
 ```bash
-python scraper.py --range 1month --skip-existing
+# Rerun safely — PDFs already on disk are skipped automatically
+python scraper.py --range 1month
+
+# Force re-download of all PDFs
+python scraper.py --range 1month --no-skip-existing
 python scraper.py --retry-failed output/anfragen_1month_20260413_120000.csv
 python scraper.py --clean-pdfs
 python scraper.py --clean-output
@@ -205,8 +209,8 @@ python scraper.py --from 01.01.2025 --to 31.12.2025 --party FPOE --output json
 # Last 100, answered only, minimal fields, no PDFs
 python scraper.py --last 100 --answered --fields number,date,title,party --no-pdf
 
-# 3-year sweep with extra keyword, skip already-downloaded PDFs
-python scraper.py --range 3years -k "gemeinnützig" --skip-existing --output both
+# 3-year sweep with extra keyword (PDFs already on disk are skipped automatically)
+python scraper.py --range 3years -k "gemeinnützig" --output both
 
 # Search for "Radio", strip noise
 python scraper.py --range 1year -s "Radio" -e "Frist" -e "Beantwortung" --output both
@@ -251,32 +255,16 @@ Reads the downloaded PDFs (or falls back to titles), embeds them with the Mistra
 
 ## Mistral API
 
-`cluster.py` uses two Mistral endpoints:
+`cluster.py` calls the Mistral REST API directly over HTTP using `requests` — no SDK installed. Both endpoints use the same API key from `.env`:
 
 | Endpoint | Model | Purpose |
 |---|---|---|
-| Embeddings | `mistral-embed` | Convert document text to 1024-dim vectors |
-| Chat | `mistral-large-latest` | Generate a short German name for each cluster |
-
-Both use the same API key from `.env`. SDK import:
-```python
-from mistralai.client import Mistral
-
-client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
-
-# Embeddings
-response = client.embeddings.create(model="mistral-embed", inputs=["text..."])
-
-# Chat
-response = client.chat.complete(model="mistral-large-latest", messages=[...])
-```
+| `POST /v1/embeddings` | `mistral-embed` | Convert document text to 1024-dim vectors |
+| `POST /v1/chat/completions` | `mistral-large-latest` | Generate a short German name for each cluster |
 
 ## Usage
 
 ```bash
-# Activate the venv first
-C:\ngo_venv\Scripts\activate
-
 # Default — reads output/pdfs/, writes output/clusters.html + output/clusters.csv
 python cluster.py
 
@@ -288,6 +276,9 @@ python cluster.py --min-cluster-size 4
 
 # Custom paths and output name
 python cluster.py --pdf-dir my_pdfs/ --output-name ngo_map_april2026
+
+# Delete clusters.csv if it crashes VS Code when hovered
+python cluster.py --clean
 ```
 
 ## cluster.py Flags
@@ -299,6 +290,7 @@ python cluster.py --pdf-dir my_pdfs/ --output-name ngo_map_april2026
 | `--output-name NAME` | `clusters` | Base name for output files (no extension) |
 | `--min-cluster-size N` | `3` | Minimum documents per HDBSCAN cluster — increase for fewer, broader clusters |
 | `--no-pdf-text` | off | Skip PDF text extraction; use `title + topics` from CSV only |
+| `--clean` | | Delete the output CSV (`clusters.csv`) and exit — useful if the file crashes your editor |
 
 ## The Interactive Map
 

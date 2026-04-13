@@ -360,6 +360,18 @@ def rows_to_records(
             "pdf_status": "not_attempted",
         })
 
+    # Deduplicate by inquiry number (same inquiry can appear in multiple GP periods)
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for rec in results:
+        if rec["number"] in seen:
+            continue
+        seen.add(rec["number"])
+        unique.append(rec)
+    if len(unique) < len(results):
+        log_skip(f"Dropped {len(results) - len(unique)} duplicate inquiry number(s)")
+    results = unique
+
     results.sort(key=lambda r: parse_date(r["date"]) or datetime.min, reverse=True)
     return results
 
@@ -715,7 +727,14 @@ def build_parser() -> argparse.ArgumentParser:
     pdf_group.add_argument(
         "--skip-existing",
         action="store_true",
-        help="Skip PDF if a file with that name already exists on disk.",
+        default=True,
+        help="Skip PDF if a file with that name already exists on disk (default: on). Use --no-skip-existing to re-download.",
+    )
+    pdf_group.add_argument(
+        "--no-skip-existing",
+        dest="skip_existing",
+        action="store_false",
+        help="Re-download PDFs even if they already exist on disk.",
     )
     pdf_group.add_argument(
         "--retry-failed",
