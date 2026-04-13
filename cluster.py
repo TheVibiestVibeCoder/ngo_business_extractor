@@ -36,11 +36,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 import pdfplumber
+import requests
 from dotenv import load_dotenv
-try:
-    from mistralai import Mistral          # mistralai v2 (full install)
-except ImportError:
-    from mistralai.client import Mistral   # mistralai v2 (Windows long-path partial install)
 
 load_dotenv()
 
@@ -111,15 +108,37 @@ def load_latest_csv(output_dir: Path) -> pd.DataFrame | None:
     return pd.DataFrame(rows) if rows else None
 
 
-# ── Mistral embeddings ────────────────────────────────────────────────────────
+# ── Mistral API (direct HTTP — no SDK dependency) ────────────────────────────
 
-def embed_texts(client: Mistral, texts: list[str]) -> np.ndarray:
+MISTRAL_EMBED_URL = "https://api.mistral.ai/v1/embeddings"
+MISTRAL_CHAT_URL  = "https://api.mistral.ai/v1/chat/completions"
+
+
+def _mistral_headers(api_key: str) -> dict:
+    return {
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+
+def embed_texts(api_key: str, texts: list[str]) -> np.ndarray:
     all_embeddings: list[list[float]] = []
     total = len(texts)
+    headers = _mistral_headers(api_key)
     for i in range(0, total, EMBED_BATCH):
         batch = [t[:MAX_TEXT_CHARS] for t in texts[i : i + EMBED_BATCH]]
-        resp = client.embeddings.create(model=EMBED_MODEL, inputs=batch)
-        all_embeddings.extend(item.embedding for item in resp.data)
+        resp = requests.post(
+            MISTRAL_EMBED_URL,
+            headers=headers,
+            json={"model": EMBED_MODEL, "input": batch},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()["data"]
+        # sort by index to keep order consistent
+        data.sort(key=lambda x: x["index"])
+        all_embeddings.extend(item["embedding"] for item in data)
         log(f"Embedded {min(i + EMBED_BATCH, total)}/{total} ...")
         time.sleep(0.3)
     return np.array(all_embeddings, dtype=np.float32)
@@ -180,11 +199,12 @@ def reduce_and_cluster(
 # ── Cluster naming via Mistral Large ─────────────────────────────────────────
 
 def name_clusters(
-    client: Mistral,
+    api_key: str,
     docs: list[dict],
     labels: np.ndarray,
 ) -> dict[int, str]:
     names: dict[int, str] = {}
+    headers = _mistral_headers(api_key)
     for label in sorted(set(labels)):
         if label == -1:
             names[-1] = "Sonstige"
@@ -202,11 +222,14 @@ def name_clusters(
             "Antworte NUR mit dem Namen, ohne Erklärung oder Anführungszeichen."
         )
 
-        resp = client.chat.complete(
-            model=CHAT_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+        resp = requests.post(
+            MISTRAL_CHAT_URL,
+            headers=headers,
+            json={"model": CHAT_MODEL, "messages": [{"role": "user", "content": prompt}]},
+            timeout=30,
         )
-        name = resp.choices[0].message.content.strip().strip('"').strip("'")
+        resp.raise_for_status()
+        name = resp.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'")
         names[label] = name
         log_ok(f"Cluster {label:2d} ({(labels == label).sum()} docs): {name}")
         time.sleep(0.4)
@@ -478,8 +501,7 @@ def main() -> None:
 
     # ── Embed ─────────────────────────────────────────────────────────────────
     section(f"Embedding {len(texts)} documents")
-    client = Mistral(api_key=api_key)
-    embeddings = embed_texts(client, texts)
+    embeddings = embed_texts(api_key, texts)
     log_ok(f"Embedding matrix: {embeddings.shape}")
 
     # ── Reduce + cluster ──────────────────────────────────────────────────────
@@ -492,7 +514,7 @@ def main() -> None:
 
     # ── Name clusters ─────────────────────────────────────────────────────────
     section("Naming clusters with Mistral Large")
-    cluster_names = name_clusters(client, docs, labels)
+    cluster_names = name_clusters(api_key, docs, labels)
 
     # ── Visualize ─────────────────────────────────────────────────────────────
     section("Building interactive visualization")

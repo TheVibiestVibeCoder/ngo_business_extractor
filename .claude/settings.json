@@ -13,7 +13,8 @@
       "Bash(C:/ngo_venv/Scripts/python -c \"from mistralai.client import Mistral; print\\('OK'\\)\")",
       "Bash(C:/ngo_venv/Scripts/python -c \"import pdfplumber; import umap; import plotly; from dotenv import load_dotenv; import sklearn; print\\('All OK'\\)\")",
       "Bash(C:/ngo_venv/Scripts/python -c \"import pdfplumber; print\\('pdfplumber ok'\\)\")",
-      "Bash(C:/ngo_venv/Scripts/python -c \"import umap; import plotly; import sklearn; print\\('umap ok, plotly ok, sklearn ok'\\)\")"
+      "Bash(C:/ngo_venv/Scripts/python -c \"import umap; import plotly; import sklearn; print\\('umap ok, plotly ok, sklearn ok'\\)\")",
+      "Bash(python -c \"import requests, pdfplumber, numpy, pandas, plotly; from dotenv import load_dotenv; print\\('All imports OK'\\)\")"
     ]
   }
 }
