@@ -16,11 +16,10 @@ python -m pip install requests beautifulsoup4 lxml
 
 ### 2. Cluster dependencies (Mistral API required)
 
-Due to a Windows MAX_PATH limitation with the Mistral SDK, packages for `cluster.py` must be installed into a dedicated venv at a short path:
+`cluster.py` calls the Mistral API directly over HTTP — no Mistral SDK needed. Install the remaining packages into your regular environment (or any venv you like):
 
 ```bash
-python -m venv C:\ngo_venv
-C:\ngo_venv\Scripts\pip install mistralai pdfplumber umap-learn scikit-learn plotly python-dotenv numpy pandas
+pip install pdfplumber umap-learn scikit-learn plotly python-dotenv numpy pandas
 ```
 
 ### 3. Mistral API key
@@ -41,8 +40,7 @@ Get a key at [console.mistral.ai](https://console.mistral.ai) → Workspace → 
 python scraper.py --range 12months
 
 # Step 2 — cluster and visualise
-C:\ngo_venv\Scripts\activate
-python cluster.py --no-pdf-text
+python cluster.py
 
 # Open the result in your browser
 start output\clusters.html
@@ -257,32 +255,16 @@ Reads the downloaded PDFs (or falls back to titles), embeds them with the Mistra
 
 ## Mistral API
 
-`cluster.py` uses two Mistral endpoints:
+`cluster.py` calls the Mistral REST API directly over HTTP using `requests` — no SDK installed. Both endpoints use the same API key from `.env`:
 
 | Endpoint | Model | Purpose |
 |---|---|---|
-| Embeddings | `mistral-embed` | Convert document text to 1024-dim vectors |
-| Chat | `mistral-large-latest` | Generate a short German name for each cluster |
-
-Both use the same API key from `.env`. SDK import:
-```python
-from mistralai.client import Mistral
-
-client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
-
-# Embeddings
-response = client.embeddings.create(model="mistral-embed", inputs=["text..."])
-
-# Chat
-response = client.chat.complete(model="mistral-large-latest", messages=[...])
-```
+| `POST /v1/embeddings` | `mistral-embed` | Convert document text to 1024-dim vectors |
+| `POST /v1/chat/completions` | `mistral-large-latest` | Generate a short German name for each cluster |
 
 ## Usage
 
 ```bash
-# Activate the venv first
-C:\ngo_venv\Scripts\activate
-
 # Default — reads output/pdfs/, writes output/clusters.html + output/clusters.csv
 python cluster.py
 

@@ -332,7 +332,7 @@ def save_html(fig: go.Figure, path: Path) -> None:
     html = pio.to_html(
         fig,
         full_html=True,
-        include_plotlyjs=True,
+        include_plotlyjs="cdn",
         div_id="anfragen_cluster_map",
         config={"scrollZoom": True, "displayModeBar": True},
     )
