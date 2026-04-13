@@ -1,28 +1,66 @@
-# NGO-Business Anfragen Scraper
+# NGO-Business Anfragen Toolkit
 
-Scrapes parliamentary inquiries (*Anfragen*) related to NGO topics from the Austrian Parliament API, downloads the associated PDFs, and exports everything to CSV or JSON.
+Two-program toolkit for researching NGO-Business parliamentary inquiries from the Austrian Parliament:
+
+- **`scraper.py`** — fetch, filter, and download Anfragen + PDFs from the Parliament API
+- **`cluster.py`** — embed all PDFs with Mistral, cluster by topic, and generate an interactive visual map
 
 ---
 
-## Quick Start
+## Setup
+
+### 1. Scraper dependencies
+```bash
+python -m pip install requests beautifulsoup4 lxml
+```
+
+### 2. Cluster dependencies (Mistral API required)
+
+Due to a Windows MAX_PATH limitation with the Mistral SDK, packages for `cluster.py` must be installed into a dedicated venv at a short path:
 
 ```bash
-pip install requests beautifulsoup4 lxml
+python -m venv C:\ngo_venv
+C:\ngo_venv\Scripts\pip install mistralai pdfplumber umap-learn scikit-learn plotly python-dotenv numpy pandas
+```
 
+### 3. Mistral API key
+
+Add your key to `.env` (already git-ignored):
+```
+MISTRAL_API_KEY=your_key_here
+```
+
+Get a key at [console.mistral.ai](https://console.mistral.ai) → Workspace → API keys.
+
+---
+
+## Typical workflow
+
+```bash
+# Step 1 — scrape inquiries and download PDFs
 python scraper.py --range 12months
-python scraper.py --last 10
-python scraper.py --from 01.01.2025 --to 31.03.2025
+
+# Step 2 — cluster and visualise
+C:\ngo_venv\Scripts\activate
+python cluster.py --no-pdf-text
+
+# Open the result in your browser
+start output\clusters.html
 ```
 
 ---
 
+# scraper.py
+
+Fetches NGO-related Anfragen from the Austrian Parliament API, downloads the original PDFs, and exports everything to CSV / JSON.
+
 ## How It Works
 
-1. **Fetches** all Anfragen (type `J`) from the Parliament API for the relevant legislative periods
+1. **Fetches** all Anfragen (type `J`) from the Parliament API across relevant legislative periods
 2. **Filters** rows by NGO keywords (`ngo`, `ngo-business`, `non-governmental`, …)
-3. **Scrapes** each detail page to find the "Anfrage (gescanntes Original)" PDF link (3 fallback strategies)
+3. **Scrapes** each detail page to find the "Anfrage (gescanntes Original)" PDF link — 3 fallback strategies
 4. **Downloads** PDFs and reports `OK` / `SKIP` / `FAILED` per inquiry
-5. **Exports** all data to `output/anfragen_<range>_<timestamp>.csv` (and/or `.json`)
+5. **Exports** to `output/anfragen_<range>_<timestamp>.csv` and/or `.json`
 
 ---
 
@@ -55,13 +93,10 @@ python scraper.py --last 50
 | Flag | Example | Description |
 |---|---|---|
 | `--keyword TERM` / `-k` | `-k "stiftung"` | Add a term to the NGO keyword filter (repeatable) |
-| `--keyword-only` | `--keyword-only -k "stiftung"` | Replace the default keyword list entirely with your `--keyword` values |
+| `--keyword-only` | `--keyword-only -k "stiftung"` | Replace the default keyword list entirely with your values |
 
 ```bash
-# Add on top of defaults
 python scraper.py --range 1year -k "zivilgesellschaft"
-
-# Replace defaults entirely
 python scraper.py --range 1year --keyword-only -k "stiftung" -k "gemeinnützig"
 ```
 
@@ -85,10 +120,6 @@ python scraper.py --range 1year --party FPOE GRÜNE NEOS
 | `--answered` | Keep only inquiries that **have** been answered |
 | `--unanswered` | Keep only inquiries that are still **pending** |
 
-```bash
-python scraper.py --range 6months --unanswered
-```
-
 ### By content
 
 | Flag | Example | Description |
@@ -97,10 +128,7 @@ python scraper.py --range 6months --unanswered
 | `--exclude TERM` / `-e` | `-e "Frist"` | Drop rows containing this term (repeatable) |
 
 ```bash
-# Both terms must appear
 python scraper.py --range 1year -s "Radio" -s "Förderung"
-
-# Exclude noise
 python scraper.py --range 3months -e "Frist" -e "Beantwortung"
 ```
 
@@ -119,13 +147,8 @@ python scraper.py --range 3months -e "Frist" -e "Beantwortung"
 **All available fields:** `number` · `date` · `title` · `party` · `topics` · `answered` · `detail_url` · `pdf_url` · `pdf_file` · `pdf_status`
 
 ```bash
-# Sort by party, alphabetical, first 30
 python scraper.py --range 1year --sort-by party --sort-asc --limit 30
-
-# Paginate: rows 51–75
 python scraper.py --range 1year --offset 50 --limit 25
-
-# Minimal export
 python scraper.py --range 3months --fields number,date,title,party --no-pdf
 ```
 
@@ -139,37 +162,26 @@ python scraper.py --range 3months --fields number,date,title,party --no-pdf
 | `--output-dir DIR` | `--output-dir results/` | Where to write files (default: `output/`) |
 | `--output-name NAME` | `--output-name q1_2025` | Custom base filename instead of auto-timestamped |
 
-```bash
-python scraper.py --range 1month --output both --output-dir reports/ --output-name januar_2026
-```
-
 ---
 
 ## PDF Management
 
 | Flag | Example | Description |
 |---|---|---|
-| `--no-pdf` | | Skip PDF download entirely — metadata only |
+| `--no-pdf` | | Skip PDF download — metadata only |
 | `--pdf-dir DIR` | `--pdf-dir my_pdfs/` | Custom PDF directory (default: `<output-dir>/pdfs/`) |
 | `--skip-existing` | | Skip download if the PDF already exists on disk |
 | `--delay SECONDS` | `--delay 1.0` | Pause between PDF requests (default: `0.5`) |
-| `--retry-failed CSV` | `--retry-failed output/anfragen_….csv` | Re-attempt only `FAILED` rows from a previous run; updates the CSV in-place |
-| `--clean-pdfs` | | Delete all PDFs in the PDF directory and exit. If combined with `--range`/`--last`, cleans first then scrapes. |
-| `--clean-output` | | Delete all `anfragen_*.csv` and `anfragen_*.json` files in the output directory and exit. If combined with `--range`/`--last`, cleans first then scrapes. |
+| `--retry-failed CSV` | `--retry-failed output/anfragen_….csv` | Re-attempt only `FAILED` rows; updates the CSV in-place |
+| `--clean-pdfs` | | Delete all PDFs and exit. Combined with `--range`/`--last`: cleans then scrapes. |
+| `--clean-output` | | Delete all `anfragen_*.csv/.json` and exit. Combined with `--range`/`--last`: cleans then scrapes. |
 | `--delete-pdf NUMBER` | `--delete-pdf 5771/J` | Delete the PDF for a specific inquiry number and exit |
 
 ```bash
-# First run
-python scraper.py --range 1month --output csv
-
-# Re-run later, skip already-downloaded
 python scraper.py --range 1month --skip-existing
-
-# Fix only what failed last time
 python scraper.py --retry-failed output/anfragen_1month_20260413_120000.csv
-
-# Wipe all PDFs and start fresh
-python scraper.py --range 1month --clean-pdfs
+python scraper.py --clean-pdfs
+python scraper.py --clean-output
 ```
 
 ---
@@ -182,12 +194,6 @@ python scraper.py --range 1month --clean-pdfs
 | `--delete-output FILENAME` | `--delete-output anfragen_1week_….csv` | Delete an output file (partial name match OK), then exit |
 | `--delete-pdf NUMBER` | `--delete-pdf 5771/J` | Delete a specific inquiry's PDF, then exit |
 
-```bash
-python scraper.py --list-output
-python scraper.py --delete-output anfragen_1week_20260410_120000.csv
-python scraper.py --delete-pdf "5771/J"
-```
-
 ---
 
 ## Common Combinations
@@ -199,19 +205,19 @@ python scraper.py --from 01.01.2025 --to 31.12.2025 --party FPOE --output json
 # Last 100, answered only, minimal fields, no PDFs
 python scraper.py --last 100 --answered --fields number,date,title,party --no-pdf
 
-# 3-year sweep with extra keyword, skip already-downloaded PDFs, CSV + JSON
+# 3-year sweep with extra keyword, skip already-downloaded PDFs
 python scraper.py --range 3years -k "gemeinnützig" --skip-existing --output both
 
-# Search for "Radio", strip noise, export both formats
+# Search for "Radio", strip noise
 python scraper.py --range 1year -s "Radio" -e "Frist" -e "Beantwortung" --output both
 
-# Completely different topic — replace default keywords
-python scraper.py --range 2years --keyword-only -k "stiftung" -k "zivilgesellschaft" --no-pdf
+# Nuclear reset — wipe everything, then fresh 12-month run
+python scraper.py --clean-output --clean-pdfs --range 12months
 ```
 
 ---
 
-## Output File Fields
+## Scraper Output Fields
 
 | Field | Description |
 |---|---|
@@ -225,3 +231,95 @@ python scraper.py --range 2years --keyword-only -k "stiftung" -k "zivilgesellsch
 | `pdf_url` | Direct PDF download URL |
 | `pdf_file` | Local path to the downloaded PDF |
 | `pdf_status` | `OK - downloaded (…KB)` · `SKIPPED - already exists` · `FAILED - …` |
+
+---
+
+---
+
+# cluster.py
+
+Reads the downloaded PDFs (or falls back to titles), embeds them with the Mistral API, clusters them by topic, names each cluster with Mistral Large, and produces a self-contained interactive HTML map.
+
+## How It Works
+
+1. **Extracts text** from each PDF via `pdfplumber` — automatically falls back to `title + topics` from the most recent CSV when a PDF is a scanned image (common for "gescanntes Original")
+2. **Embeds** all documents in batches using `mistral-embed` (1024-dimensional vectors)
+3. **Reduces** dimensions with UMAP — one high-dimensional pass for clustering quality, one 2D pass for the plot
+4. **Clusters** with HDBSCAN — no need to pick K; cluster count is discovered automatically
+5. **Names** each cluster with Mistral Large based on a sample of its titles (output in German)
+6. **Exports** an interactive Plotly HTML file and a `clusters.csv` assignment table
+
+## Mistral API
+
+`cluster.py` uses two Mistral endpoints:
+
+| Endpoint | Model | Purpose |
+|---|---|---|
+| Embeddings | `mistral-embed` | Convert document text to 1024-dim vectors |
+| Chat | `mistral-large-latest` | Generate a short German name for each cluster |
+
+Both use the same API key from `.env`. SDK import:
+```python
+from mistralai.client import Mistral
+
+client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+
+# Embeddings
+response = client.embeddings.create(model="mistral-embed", inputs=["text..."])
+
+# Chat
+response = client.chat.complete(model="mistral-large-latest", messages=[...])
+```
+
+## Usage
+
+```bash
+# Activate the venv first
+C:\ngo_venv\Scripts\activate
+
+# Default — reads output/pdfs/, writes output/clusters.html + output/clusters.csv
+python cluster.py
+
+# Scanned PDFs / faster — use titles + topics instead of PDF text
+python cluster.py --no-pdf-text
+
+# Adjust cluster granularity (smaller = more clusters)
+python cluster.py --min-cluster-size 4
+
+# Custom paths and output name
+python cluster.py --pdf-dir my_pdfs/ --output-name ngo_map_april2026
+```
+
+## cluster.py Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--pdf-dir DIR` | `output/pdfs/` | Directory of PDFs to embed and cluster |
+| `--output-dir DIR` | `output/` | Where to write `clusters.html` and `clusters.csv` |
+| `--output-name NAME` | `clusters` | Base name for output files (no extension) |
+| `--min-cluster-size N` | `3` | Minimum documents per HDBSCAN cluster — increase for fewer, broader clusters |
+| `--no-pdf-text` | off | Skip PDF text extraction; use `title + topics` from CSV only |
+
+## The Interactive Map
+
+The output `clusters.html` is a self-contained file — open it in any browser, no server needed.
+
+- **Zoom & pan** with scroll wheel and drag
+- **Hover** over any point to see: inquiry number, title, party, date, cluster name
+- **Click** any point to open the parliament detail page in a new tab
+- **Toggle clusters** on/off by clicking items in the legend
+- Points coloured by cluster; cluster names labelled at centroids
+
+## Cluster Output Fields (`clusters.csv`)
+
+| Field | Description |
+|---|---|
+| `cluster_id` | Numeric cluster ID (`-1` = unassigned noise) |
+| `cluster_name` | German name generated by Mistral Large |
+| `number` | Inquiry number |
+| `date` | Date filed |
+| `title` | Full inquiry title |
+| `party` | Filing party |
+| `topics` | Topic tags |
+| `text_source` | `pdf` if text was extracted from the PDF, `title` if fallback was used |
+| `detail_url` | Parliament detail page URL |
